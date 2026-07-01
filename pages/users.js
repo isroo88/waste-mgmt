@@ -7,6 +7,7 @@ function Users() {
   const [users, setUsers] = useState([]);
   const [form, setForm] = useState({ username: '', full_name: '', password: '', role: 'staff' });
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -14,46 +15,38 @@ function Users() {
   }, []);
 
   async function loadUsers() {
-    const { data } = await supabase.from('app_users').select('*').order('created_at', { ascending: false });
+    const { data } = await supabase
+      .from('app_users')
+      .select('*')
+      .order('created_at', { ascending: false });
     setUsers(data || []);
   }
 
   async function handleCreate(e) {
     e.preventDefault();
     setError('');
+    setSuccess('');
+
     if (!form.username || !form.full_name || !form.password) {
       setError('Please fill all fields.');
       return;
     }
+
     setSubmitting(true);
 
-    // Note: signUp runs client-side here for simplicity. In production, move this
-    // to a server-side admin API route using the Supabase service role key,
-    // so creating a staff account doesn't log the admin out / swap sessions.
-    const email = `${form.username.trim().toLowerCase()}@wastemgmt.local`;
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password: form.password,
+    const res = await fetch('/api/create-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
     });
 
-    if (signUpError) {
-      setError(signUpError.message);
-      setSubmitting(false);
-      return;
-    }
-
-    const { error: profileError } = await supabase.from('app_users').insert({
-      id: data.user.id,
-      username: form.username.trim().toLowerCase(),
-      full_name: form.full_name,
-      role: form.role,
-      status: 'active',
-    });
-
+    const result = await res.json();
     setSubmitting(false);
-    if (profileError) {
-      setError(profileError.message);
+
+    if (!res.ok) {
+      setError(result.error || 'Failed to create user.');
     } else {
+      setSuccess(`User "${form.username}" created successfully.`);
       setForm({ username: '', full_name: '', password: '', role: 'staff' });
       loadUsers();
     }
@@ -73,17 +66,19 @@ function Users() {
     input: { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 14 },
     button: { width: '100%', padding: '12px', borderRadius: 8, border: 'none', background: '#22c55e', color: '#fff', fontWeight: 600, fontSize: 14 },
     error: { color: '#dc2626', fontSize: 13, marginBottom: 12 },
+    success: { color: '#15803d', fontSize: 13, marginBottom: 12, background: '#dcfce7', padding: '8px 12px', borderRadius: 8 },
     note: { fontSize: 12, color: '#94a3b8', marginTop: -8, marginBottom: 16 },
     table: { width: '100%', borderCollapse: 'collapse', fontSize: 14, background: '#fff', borderRadius: 12, overflow: 'hidden' },
     th: { textAlign: 'left', padding: '12px', color: '#64748b', fontWeight: 600, fontSize: 12, background: '#f8fafc', borderBottom: '1px solid #e2e8f0' },
     td: { padding: '12px', borderBottom: '1px solid #f1f5f9' },
     pill: (active) => ({
       padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-      background: active ? '#dcfce7' : '#fee2e2', color: active ? '#15803d' : '#b91c1c',
+      background: active ? '#dcfce7' : '#fee2e2',
+      color: active ? '#15803d' : '#b91c1c',
     }),
     toggleBtn: (active) => ({
       padding: '6px 14px', borderRadius: 6, border: 'none', fontSize: 12, fontWeight: 600, color: '#fff',
-      background: active ? '#ef4444' : '#22c55e',
+      background: active ? '#ef4444' : '#22c55e', cursor: 'pointer',
     }),
   };
 
@@ -94,15 +89,15 @@ function Users() {
           <h3 style={{ marginTop: 0, fontSize: 15 }}>Add Staff / Admin</h3>
           <div style={styles.field}>
             <label style={styles.label}>Username *</label>
-            <input style={styles.input} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required />
+            <input style={styles.input} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="e.g. ramesh" required />
           </div>
           <div style={styles.field}>
             <label style={styles.label}>Full Name *</label>
-            <input style={styles.input} value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} required />
+            <input style={styles.input} value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} placeholder="e.g. Ramesh Sharma" required />
           </div>
           <div style={styles.field}>
             <label style={styles.label}>Password *</label>
-            <input style={styles.input} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+            <input style={styles.input} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Min 6 characters" required />
           </div>
           <div style={styles.field}>
             <label style={styles.label}>Role *</label>
@@ -111,8 +106,9 @@ function Users() {
               <option value="admin">Admin</option>
             </select>
           </div>
-          <p style={styles.note}>Login email used internally: username@wastemgmt.local</p>
+          <p style={styles.note}>Staff will log in with just their username and password.</p>
           {error && <p style={styles.error}>{error}</p>}
+          {success && <p style={styles.success}>{success}</p>}
           <button style={styles.button} type="submit" disabled={submitting}>
             {submitting ? 'Creating...' : 'Create User'}
           </button>
