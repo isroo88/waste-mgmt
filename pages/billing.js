@@ -8,11 +8,13 @@ function Billing() {
   const { user } = useAuth();
   const [customers, setCustomers] = useState([]);
   const [bills, setBills] = useState([]);
-  const [selectedCustomer, setSelectedCustomer] = useState('');
+  const [search, setSearch] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState(null); // full customer object
   const [periodLabel, setPeriodLabel] = useState('');
   const [amount, setAmount] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -21,7 +23,7 @@ function Billing() {
   async function loadData() {
     const { data: customerData } = await supabase
       .from('customers')
-      .select('id, name, monthly_fee')
+      .select('id, name, monthly_fee, area, phone')
       .eq('status', 'active')
       .order('name');
     setCustomers(customerData || []);
@@ -34,29 +36,40 @@ function Billing() {
     setBills(billData || []);
   }
 
-  function handleCustomerChange(id) {
-    setSelectedCustomer(id);
-    const c = customers.find((c) => c.id === id);
-    if (c) setAmount(c.monthly_fee);
+  function selectCustomer(c) {
+    setSelectedCustomer(c);
+    setAmount(c.monthly_fee);
+    setSearch(c.name);
+    setShowDropdown(false);
   }
 
+  function handleSearchChange(val) {
+    setSearch(val);
+    setSelectedCustomer(null);
+    setShowDropdown(true);
+  }
+
+  const filteredCustomers = customers.filter((c) =>
+    c.name.toLowerCase().includes(search.toLowerCase()) ||
+    c.phone.includes(search)
+  );
+
   async function generateBillNumber() {
-    const ts = Date.now().toString().slice(-8);
-    return `BILL-${ts}`;
+    return `BILL-${Date.now().toString().slice(-8)}`;
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
     if (!selectedCustomer || !amount || !periodLabel) {
-      setError('Please fill all fields.');
+      setError('Please select a customer and fill all fields.');
       return;
     }
     setSubmitting(true);
     const billNumber = await generateBillNumber();
     const { error: insertError } = await supabase.from('bills').insert({
       bill_number: billNumber,
-      customer_id: selectedCustomer,
+      customer_id: selectedCustomer.id,
       amount: Number(amount),
       period_label: periodLabel,
       generated_by: user.id,
@@ -66,7 +79,8 @@ function Billing() {
     if (insertError) {
       setError(insertError.message);
     } else {
-      setSelectedCustomer('');
+      setSelectedCustomer(null);
+      setSearch('');
       setAmount('');
       setPeriodLabel('');
       loadData();
@@ -76,19 +90,32 @@ function Billing() {
   const styles = {
     layout: { display: 'grid', gridTemplateColumns: '380px 1fr', gap: 24 },
     form: { background: '#fff', borderRadius: 12, padding: 24, border: '1px solid #e2e8f0', height: 'fit-content' },
-    field: { marginBottom: 16 },
+    field: { marginBottom: 16, position: 'relative' },
     label: { fontSize: 13, fontWeight: 600, color: '#334155', display: 'block', marginBottom: 6 },
     input: { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 14 },
-    button: { width: '100%', padding: '12px', borderRadius: 8, border: 'none', background: '#22c55e', color: '#fff', fontWeight: 600, fontSize: 14 },
+    dropdown: {
+      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
+      background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
+      boxShadow: '0 4px 12px rgba(0,0,0,0.1)', maxHeight: 200, overflowY: 'auto',
+    },
+    dropdownItem: (hovered) => ({
+      padding: '10px 12px', cursor: 'pointer', fontSize: 14,
+      background: hovered ? '#f1f5f9' : '#fff',
+      borderBottom: '1px solid #f8fafc',
+    }),
+    selectedTag: {
+      display: 'inline-flex', alignItems: 'center', gap: 8,
+      padding: '6px 10px', borderRadius: 6, background: '#f0fdf4',
+      border: '1px solid #bbf7d0', fontSize: 13, marginBottom: 8,
+    },
+    clearBtn: { background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: 16, lineHeight: 1 },
+    button: { width: '100%', padding: '12px', borderRadius: 8, border: 'none', background: '#22c55e', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' },
     error: { color: '#dc2626', fontSize: 13, marginBottom: 12 },
     table: { width: '100%', borderCollapse: 'collapse', fontSize: 14, background: '#fff', borderRadius: 12, overflow: 'hidden' },
     th: { textAlign: 'left', padding: '12px', color: '#64748b', fontWeight: 600, fontSize: 12, background: '#f8fafc', borderBottom: '1px solid #e2e8f0' },
     td: { padding: '12px', borderBottom: '1px solid #f1f5f9' },
     statusPill: (status) => ({
-      padding: '3px 10px',
-      borderRadius: 999,
-      fontSize: 12,
-      fontWeight: 600,
+      padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
       background: status === 'paid' ? '#dcfce7' : '#fef9c3',
       color: status === 'paid' ? '#15803d' : '#a16207',
     }),
@@ -99,15 +126,47 @@ function Billing() {
       <div style={styles.layout}>
         <form style={styles.form} onSubmit={handleSubmit}>
           <h3 style={{ marginTop: 0, fontSize: 15 }}>Generate New Bill</h3>
+
+          {/* Customer search */}
           <div style={styles.field}>
             <label style={styles.label}>Customer *</label>
-            <select style={styles.input} value={selectedCustomer} onChange={(e) => handleCustomerChange(e.target.value)} required>
-              <option value="">Select customer...</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+            {selectedCustomer ? (
+              <div style={styles.selectedTag}>
+                <span>✓ {selectedCustomer.name}</span>
+                <button style={styles.clearBtn} type="button" onClick={() => { setSelectedCustomer(null); setSearch(''); setAmount(''); }}>×</button>
+              </div>
+            ) : (
+              <>
+                <input
+                  style={styles.input}
+                  placeholder="Search by name or phone..."
+                  value={search}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onFocus={() => setShowDropdown(true)}
+                  autoComplete="off"
+                />
+                {showDropdown && search.length > 0 && (
+                  <div style={styles.dropdown}>
+                    {filteredCustomers.length === 0 ? (
+                      <div style={{ padding: '10px 12px', color: '#94a3b8', fontSize: 14 }}>No customers found</div>
+                    ) : (
+                      filteredCustomers.slice(0, 8).map((c) => (
+                        <div
+                          key={c.id}
+                          style={styles.dropdownItem(false)}
+                          onMouseDown={() => selectCustomer(c)}
+                        >
+                          <strong>{c.name}</strong>
+                          <span style={{ color: '#94a3b8', marginLeft: 8, fontSize: 12 }}>{c.phone} · {c.area.replace('ward-', 'Ward ')}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </div>
+
           <div style={styles.field}>
             <label style={styles.label}>Period (BS) *</label>
             <input
@@ -118,10 +177,19 @@ function Billing() {
               required
             />
           </div>
+
           <div style={styles.field}>
             <label style={styles.label}>Amount (Rs.) *</label>
-            <input style={styles.input} type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+            <input
+              style={styles.input}
+              type="number"
+              min="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
           </div>
+
           {error && <p style={styles.error}>{error}</p>}
           <button style={styles.button} type="submit" disabled={submitting}>
             {submitting ? 'Generating...' : 'Generate Bill'}
