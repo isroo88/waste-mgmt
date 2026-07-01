@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
-import Layout from '../components/Layout';
-import StatusBadge from '../components/StatusBadge';
-import { withAuth, useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
-import { toBS, AREAS } from '../lib/dateUtils';
+import Layout from '../../components/Layout';
+import StatusBadge from '../../components/StatusBadge';
+import { withAuth, useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
+import { toBS, AREAS } from '../../lib/dateUtils';
 
 function Customers() {
   const { user, isAdmin } = useAuth();
