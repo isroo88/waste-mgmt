@@ -63,3 +63,4 @@ After that, you can create additional staff/admin accounts directly from the **U
 2. **No SMS/WhatsApp reminders yet** — discussed as a future add-on.
 3. **No printable PDF receipts/invoices yet** — currently bills and payments are just database records.
 4. **No customer self-lookup page** — intentionally skipped per your decision to keep this internal-only for now.
+"# waste-mgmt" 
