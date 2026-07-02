@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: '/payments', label: 'Payments', icon: '◌' },
   { href: '/fee-requests', label: 'Fee Requests', icon: '↺' },
   { href: '/users', label: 'Users', icon: '◎', adminOnly: true },
+  { href: '/settings', label: 'Settings', icon: '⚙', adminOnly: true },
 ];
 
 export default function Layout({ title, children }) {
@@ -23,12 +24,16 @@ export default function Layout({ title, children }) {
       color: '#e2e8f0',
       display: 'flex',
       flexDirection: 'column',
-      padding: '24px 16px',
+      padding: '24px 16px 16px',
       flexShrink: 0,
+      position: 'sticky',
+      top: 0,
+      height: '100vh',
+      overflowY: 'auto',
     },
     brand: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 32, padding: '0 8px' },
     brandIcon: { fontSize: 22, color: '#22c55e' },
-    brandText: { fontSize: 14, fontWeight: 700, lineHeight: 1.3 },
+    brandText: { fontSize: 13, fontWeight: 700, lineHeight: 1.4 },
     nav: { display: 'flex', flexDirection: 'column', gap: 4, flex: 1 },
     navItem: (active) => ({
       display: 'flex',
@@ -53,8 +58,9 @@ export default function Layout({ title, children }) {
       border: '1px solid #334155',
       color: '#94a3b8',
       fontSize: 14,
+      cursor: 'pointer',
     },
-    main: { flex: 1, display: 'flex', flexDirection: 'column' },
+    main: { flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' },
     topbar: {
       display: 'flex',
       justifyContent: 'space-between',
@@ -66,17 +72,19 @@ export default function Layout({ title, children }) {
     pageTitle: { fontSize: 20, fontWeight: 700, margin: 0 },
     profile: { display: 'flex', alignItems: 'center', gap: 10 },
     avatar: {
-      width: 36,
-      height: 36,
-      borderRadius: '50%',
-      background: '#22c55e',
-      color: '#fff',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontWeight: 700,
+      width: 36, height: 36, borderRadius: '50%',
+      background: '#22c55e', color: '#fff',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
     },
     content: { padding: 32, flex: 1 },
+    footer: {
+      background: '#0f172a',
+      color: '#94a3b8',
+      textAlign: 'center',
+      padding: '16px 32px',
+      fontSize: 12,
+      lineHeight: 1.8,
+    },
   };
 
   return (
@@ -90,7 +98,7 @@ export default function Layout({ title, children }) {
           {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => (
             <button
               key={item.href}
-              style={styles.navItem(router.pathname === item.href)}
+              style={styles.navItem(router.pathname === item.href || router.pathname.startsWith(item.href + '/'))}
               onClick={() => router.push(item.href)}
             >
               <span>{item.icon}</span>
@@ -108,11 +116,20 @@ export default function Layout({ title, children }) {
             <div style={styles.avatar}>{user?.full_name?.[0]?.toUpperCase() || 'U'}</div>
             <div>
               <strong style={{ display: 'block', fontSize: 14 }}>{user?.full_name}</strong>
-              <p style={{ margin: 0, fontSize: 12, color: '#64748b', textTransform: 'capitalize' }}>{user?.role}</p>
+              <p style={{ margin: 0, fontSize: 12, color: '#64748b', textTransform: 'capitalize' }}>
+                {user?.role} {user?.staff_code ? `· ${user.staff_code}` : ''}
+              </p>
             </div>
           </div>
         </header>
+
         <main style={styles.content}>{children}</main>
+
+        <footer style={styles.footer}>
+          <strong style={{ color: '#e2e8f0', fontSize: 13 }}>Waste Management Recycling Pvt. Ltd.</strong><br />
+          Kathmandu, Nepal &nbsp;·&nbsp; Tel: 01-4XXXXXX &nbsp;·&nbsp; wastecity@email.com<br />
+          <span style={{ fontSize: 11 }}>© {new Date().getFullYear()} All rights reserved.</span>
+        </footer>
       </div>
     </div>
   );
