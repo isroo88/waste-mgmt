@@ -4,10 +4,8 @@ import dynamic from 'next/dynamic';
 import Layout from '../components/Layout';
 import { withAuth, useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { toBS } from '../lib/dateUtils';
+import { toBS, monthsSince } from '../lib/dateUtils';
 
-// Recharts uses browser-only APIs (window/document).
-// dynamic import with ssr:false prevents a server-side crash during Vercel build.
 const LineChart = dynamic(() => import('recharts').then((m) => m.LineChart), { ssr: false });
 const Line = dynamic(() => import('recharts').then((m) => m.Line), { ssr: false });
 const XAxis = dynamic(() => import('recharts').then((m) => m.XAxis), { ssr: false });
@@ -20,8 +18,10 @@ function Dashboard() {
   const { user, isAdmin } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState({ total: 0, active: 0, monthly: 0, daily: 0 });
-  const [recentPayments, setRecentPayments] = useState([]);
+  const [statusCounts, setStatusCounts] = useState({ green: 0, yellow: 0, red: 0 });
   const [graphData, setGraphData] = useState([]);
+  const [staffBlocks, setStaffBlocks] = useState([]);
+  const [myPerf, setMyPerf] = useState({ daily: 0, monthly: 0, customers: 0, lifetime: 0 });
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -31,62 +31,89 @@ function Dashboard() {
 
   async function loadDashboard() {
     setLoading(true);
+    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
 
-    const { count: total } = await supabase.from('customers').select('*', { count: 'exact', head: true });
-    const { count: active } = await supabase
+    // --- Customer counts ---
+    const { data: allCustomers } = await supabase
       .from('customers')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'active');
+      .select('id, payment_start_date, status');
 
-    // Recent payments — staff see only their own, admin sees all
-    let paymentsQuery = supabase
+    const { data: lastPayments } = await supabase
       .from('payments')
-      .select('id, amount, payment_date, customer_id, customers(name), collected_by, app_users(full_name)')
-      .order('payment_date', { ascending: false })
-      .limit(10);
-    if (!isAdmin) paymentsQuery = paymentsQuery.eq('collected_by', user.id);
-    const { data: payments } = await paymentsQuery;
+      .select('customer_id, payment_date')
+      .order('payment_date', { ascending: false });
 
-    let monthlyTotal = 0;
-    let dailyTotal = 0;
+    const lastPaymentMap = {};
+    (lastPayments || []).forEach((p) => {
+      if (!lastPaymentMap[p.customer_id]) lastPaymentMap[p.customer_id] = p.payment_date;
+    });
+
+    let green = 0, yellow = 0, red = 0, active = 0;
+    (allCustomers || []).forEach((c) => {
+      if (c.status !== 'active') return;
+      active++;
+      const ref = lastPaymentMap[c.id] || c.payment_start_date;
+      const months = monthsSince(ref);
+      if (months <= 3) green++;
+      else if (months <= 6) yellow++;
+      else red++;
+    });
+    setStats((s) => ({ ...s, total: allCustomers?.length || 0, active }));
+    setStatusCounts({ green, yellow, red });
 
     if (isAdmin) {
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-      const startOfDay = now.toISOString().slice(0, 10);
+      // Admin daily/monthly totals
+      const { data: dayP } = await supabase.from('payments').select('amount').gte('payment_date', today);
+      const { data: monP } = await supabase.from('payments').select('amount').gte('payment_date', startOfMonth);
+      const daily = (dayP || []).reduce((s, p) => s + Number(p.amount), 0);
+      const monthly = (monP || []).reduce((s, p) => s + Number(p.amount), 0);
+      setStats((s) => ({ ...s, daily, monthly }));
 
-      const { data: monthPayments } = await supabase
-        .from('payments')
-        .select('amount')
-        .gte('payment_date', startOfMonth);
-      monthlyTotal = (monthPayments || []).reduce((sum, p) => sum + Number(p.amount), 0);
-
-      const { data: dayPayments } = await supabase
-        .from('payments')
-        .select('amount')
-        .gte('payment_date', startOfDay);
-      dailyTotal = (dayPayments || []).reduce((sum, p) => sum + Number(p.amount), 0);
-
-      // Last 6 months collection graph
-      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1).toISOString().slice(0, 10);
-      const { data: graphPayments } = await supabase
-        .from('payments')
-        .select('amount, payment_date')
-        .gte('payment_date', sixMonthsAgo);
-
+      // Graph — last 6 months
+      const sixAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1).toISOString().slice(0, 10);
+      const { data: gp } = await supabase.from('payments').select('amount, payment_date').gte('payment_date', sixAgo);
       const monthMap = {};
-      (graphPayments || []).forEach((p) => {
-        const key = p.payment_date.slice(0, 7); // YYYY-MM
+      (gp || []).forEach((p) => {
+        const key = p.payment_date.slice(0, 7);
         monthMap[key] = (monthMap[key] || 0) + Number(p.amount);
       });
-      const sortedGraph = Object.keys(monthMap)
-        .sort()
-        .map((key) => ({ month: key, total: monthMap[key] }));
-      setGraphData(sortedGraph);
-    }
+      setGraphData(Object.keys(monthMap).sort().map((k) => ({ month: k, total: monthMap[k] })));
 
-    setStats({ total: total || 0, active: active || 0, monthly: monthlyTotal, daily: dailyTotal });
-    setRecentPayments(payments || []);
+      // Staff performance blocks
+      const { data: staffList } = await supabase
+        .from('app_users')
+        .select('id, full_name, staff_code, status')
+        .eq('role', 'staff');
+
+      const blocks = await Promise.all((staffList || []).map(async (st) => {
+        const { data: dayPay } = await supabase.from('payments').select('amount').eq('collected_by', st.id).gte('payment_date', today);
+        const { data: monPay } = await supabase.from('payments').select('amount').eq('collected_by', st.id).gte('payment_date', startOfMonth);
+        const { data: lifePay } = await supabase.from('payments').select('amount').eq('collected_by', st.id);
+        const { count: custCount } = await supabase.from('customers').select('*', { count: 'exact', head: true }).eq('registered_by', st.id);
+        return {
+          ...st,
+          daily: (dayPay || []).reduce((s, p) => s + Number(p.amount), 0),
+          monthly: (monPay || []).reduce((s, p) => s + Number(p.amount), 0),
+          lifetime: (lifePay || []).reduce((s, p) => s + Number(p.amount), 0),
+          customers: custCount || 0,
+        };
+      }));
+      setStaffBlocks(blocks);
+    } else {
+      // Staff sees own performance only
+      const { data: dayPay } = await supabase.from('payments').select('amount').eq('collected_by', user.id).gte('payment_date', today);
+      const { data: monPay } = await supabase.from('payments').select('amount').eq('collected_by', user.id).gte('payment_date', startOfMonth);
+      const { data: lifePay } = await supabase.from('payments').select('amount').eq('collected_by', user.id);
+      const { count: custCount } = await supabase.from('customers').select('*', { count: 'exact', head: true }).eq('registered_by', user.id);
+      setMyPerf({
+        daily: (dayPay || []).reduce((s, p) => s + Number(p.amount), 0),
+        monthly: (monPay || []).reduce((s, p) => s + Number(p.amount), 0),
+        lifetime: (lifePay || []).reduce((s, p) => s + Number(p.amount), 0),
+        customers: custCount || 0,
+      });
+    }
     setLoading(false);
   }
 
@@ -95,100 +122,125 @@ function Dashboard() {
     if (search.trim()) router.push(`/customers?search=${encodeURIComponent(search.trim())}`);
   }
 
-  const styles = {
-    grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 },
+  const s = {
+    grid4: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 },
+    grid3: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 },
     card: { background: '#fff', borderRadius: 12, padding: 20, border: '1px solid #e2e8f0' },
     cardLabel: { fontSize: 13, color: '#64748b', margin: 0 },
-    cardValue: { fontSize: 28, fontWeight: 700, margin: '8px 0 0' },
+    cardValue: { fontSize: 26, fontWeight: 700, margin: '6px 0 0' },
+    statusGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 },
+    statusCard: (bg, border) => ({ background: bg, borderRadius: 12, padding: 20, border: `1px solid ${border}`, textAlign: 'center' }),
+    statusNum: (color) => ({ fontSize: 32, fontWeight: 800, color, margin: '4px 0' }),
     searchForm: { display: 'flex', gap: 8, marginBottom: 24 },
     searchInput: { flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 14 },
-    searchBtn: { padding: '10px 20px', borderRadius: 8, border: 'none', background: '#0f172a', color: '#fff', fontWeight: 600 },
+    searchBtn: { padding: '10px 20px', borderRadius: 8, border: 'none', background: '#0f172a', color: '#fff', fontWeight: 600, cursor: 'pointer' },
     section: { background: '#fff', borderRadius: 12, padding: 20, border: '1px solid #e2e8f0', marginBottom: 24 },
-    sectionTitle: { fontSize: 15, fontWeight: 700, marginBottom: 16 },
-    table: { width: '100%', borderCollapse: 'collapse', fontSize: 14 },
-    th: { textAlign: 'left', padding: '8px 12px', color: '#64748b', fontWeight: 600, fontSize: 12, borderBottom: '1px solid #e2e8f0' },
-    td: { padding: '10px 12px', borderBottom: '1px solid #f1f5f9' },
+    sectionTitle: { fontSize: 15, fontWeight: 700, marginBottom: 16, marginTop: 0 },
+    staffGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 },
+    staffCard: {
+      background: '#f8fafc', borderRadius: 10, padding: 16, border: '1px solid #e2e8f0',
+      cursor: 'pointer', transition: 'border-color 0.15s',
+    },
+    staffName: { fontWeight: 700, fontSize: 15, margin: '0 0 2px' },
+    staffCode: { fontSize: 12, color: '#94a3b8', margin: '0 0 12px' },
+    perfRow: { display: 'flex', justifyContent: 'space-between', marginBottom: 6 },
+    perfLabel: { fontSize: 12, color: '#64748b' },
+    perfValue: { fontSize: 12, fontWeight: 700, color: '#0f172a' },
+    dot: (c) => ({ width: 10, height: 10, borderRadius: '50%', background: c, display: 'inline-block', marginRight: 6 }),
   };
 
   return (
     <Layout title="Dashboard">
-      <form style={styles.searchForm} onSubmit={handleSearch}>
-        <input
-          style={styles.searchInput}
-          placeholder="Search customers by name, phone, or address..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <button style={styles.searchBtn} type="submit">Search</button>
+      {/* Search */}
+      <form style={s.searchForm} onSubmit={handleSearch}>
+        <input style={s.searchInput} placeholder="Search customers by name, phone, or address..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        <button style={s.searchBtn} type="submit">Search</button>
       </form>
 
-      <div style={styles.grid}>
-        <div style={styles.card}>
-          <p style={styles.cardLabel}>Total Customers</p>
-          <p style={styles.cardValue}>{stats.total}</p>
+      {/* Customer status counts — updated thresholds: green ≤3mo, yellow 3-6mo, red 6mo+ */}
+      <div style={s.statusGrid}>
+        <div style={s.statusCard('#dcfce7', '#bbf7d0')}>
+          <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#15803d' }}><span style={s.dot('#22c55e')} />PAID UP TO DATE</p>
+          <p style={s.statusNum('#15803d')}>{statusCounts.green}</p>
+          <p style={{ margin: 0, fontSize: 11, color: '#16a34a' }}>Within last 3 months</p>
         </div>
-        <div style={styles.card}>
-          <p style={styles.cardLabel}>Active Customers</p>
-          <p style={styles.cardValue}>{stats.active}</p>
+        <div style={s.statusCard('#fef9c3', '#fde68a')}>
+          <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#a16207' }}><span style={s.dot('#eab308')} />OVERDUE</p>
+          <p style={s.statusNum('#a16207')}>{statusCounts.yellow}</p>
+          <p style={{ margin: 0, fontSize: 11, color: '#ca8a04' }}>3 – 6 months overdue</p>
         </div>
-        {isAdmin && (
-          <>
-            <div style={styles.card}>
-              <p style={styles.cardLabel}>Monthly Collection</p>
-              <p style={styles.cardValue}>Rs. {stats.monthly.toLocaleString()}</p>
-            </div>
-            <div style={styles.card}>
-              <p style={styles.cardLabel}>Daily Collection</p>
-              <p style={styles.cardValue}>Rs. {stats.daily.toLocaleString()}</p>
-            </div>
-          </>
-        )}
+        <div style={s.statusCard('#fee2e2', '#fecaca')}>
+          <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#b91c1c' }}><span style={s.dot('#ef4444')} />CRITICAL</p>
+          <p style={s.statusNum('#b91c1c')}>{statusCounts.red}</p>
+          <p style={{ margin: 0, fontSize: 11, color: '#dc2626' }}>6+ months overdue</p>
+        </div>
       </div>
 
+      {/* Summary stats */}
+      {isAdmin ? (
+        <div style={s.grid4}>
+          <div style={s.card}><p style={s.cardLabel}>Total Customers</p><p style={s.cardValue}>{stats.total}</p></div>
+          <div style={s.card}><p style={s.cardLabel}>Active Customers</p><p style={s.cardValue}>{stats.active}</p></div>
+          <div style={s.card}><p style={s.cardLabel}>Today's Collection</p><p style={s.cardValue}>Rs. {stats.daily.toLocaleString()}</p></div>
+          <div style={s.card}><p style={s.cardLabel}>Monthly Collection</p><p style={s.cardValue}>Rs. {stats.monthly.toLocaleString()}</p></div>
+        </div>
+      ) : (
+        <div style={s.grid4}>
+          <div style={s.card}><p style={s.cardLabel}>My Customers</p><p style={s.cardValue}>{myPerf.customers}</p></div>
+          <div style={s.card}><p style={s.cardLabel}>Today's Collection</p><p style={s.cardValue}>Rs. {myPerf.daily.toLocaleString()}</p></div>
+          <div style={s.card}><p style={s.cardLabel}>Monthly Collection</p><p style={s.cardValue}>Rs. {myPerf.monthly.toLocaleString()}</p></div>
+          <div style={s.card}><p style={s.cardLabel}>Lifetime Collection</p><p style={s.cardValue}>Rs. {myPerf.lifetime.toLocaleString()}</p></div>
+        </div>
+      )}
+
+      {/* Admin: collection graph */}
       {isAdmin && graphData.length > 0 && (
-        <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>Monthly Collection Trend</h3>
-          <ResponsiveContainer width="100%" height={260}>
+        <div style={s.section}>
+          <h3 style={s.sectionTitle}>Monthly Collection Trend</h3>
+          <ResponsiveContainer width="100%" height={240}>
             <LineChart data={graphData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="month" fontSize={12} />
               <YAxis fontSize={12} />
               <Tooltip formatter={(v) => `Rs. ${v.toLocaleString()}`} />
-              <Line type="monotone" dataKey="total" stroke="#22c55e" strokeWidth={2} />
+              <Line type="monotone" dataKey="total" stroke="#22c55e" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       )}
 
-      <div style={styles.section}>
-        <h3 style={styles.sectionTitle}>Recent Payments</h3>
-        {loading ? (
-          <p style={{ color: '#64748b' }}>Loading...</p>
-        ) : recentPayments.length === 0 ? (
-          <p style={{ color: '#64748b' }}>No payments recorded yet.</p>
-        ) : (
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>Customer</th>
-                <th style={styles.th}>Amount</th>
-                <th style={styles.th}>Date (BS)</th>
-                {isAdmin && <th style={styles.th}>Collected By</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {recentPayments.map((p) => (
-                <tr key={p.id}>
-                  <td style={styles.td}>{p.customers?.name || '—'}</td>
-                  <td style={styles.td}>Rs. {Number(p.amount).toLocaleString()}</td>
-                  <td style={styles.td}>{toBS(p.payment_date)}</td>
-                  {isAdmin && <td style={styles.td}>{p.app_users?.full_name || '—'}</td>}
-                </tr>
+      {/* Admin: staff performance blocks */}
+      {isAdmin && (
+        <div style={s.section}>
+          <h3 style={s.sectionTitle}>Staff Performance</h3>
+          {loading ? <p style={{ color: '#94a3b8' }}>Loading...</p> : (
+            <div style={s.staffGrid}>
+              {staffBlocks.map((st) => (
+                <div
+                  key={st.id}
+                  style={s.staffCard}
+                  onClick={() => router.push(`/users/${st.id}`)}
+                  onMouseEnter={(e) => e.currentTarget.style.borderColor = '#22c55e'}
+                  onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <p style={s.staffName}>{st.full_name}</p>
+                      <p style={s.staffCode}>{st.staff_code} · <span style={{ color: st.status === 'active' ? '#22c55e' : '#ef4444' }}>{st.status}</span></p>
+                    </div>
+                    <span style={{ fontSize: 20 }}>→</span>
+                  </div>
+                  <div style={s.perfRow}><span style={s.perfLabel}>Customers registered</span><span style={s.perfValue}>{st.customers}</span></div>
+                  <div style={s.perfRow}><span style={s.perfLabel}>Today's collection</span><span style={s.perfValue}>Rs. {st.daily.toLocaleString()}</span></div>
+                  <div style={s.perfRow}><span style={s.perfLabel}>Monthly collection</span><span style={s.perfValue}>Rs. {st.monthly.toLocaleString()}</span></div>
+                  <div style={s.perfRow}><span style={s.perfLabel}>Lifetime collection</span><span style={s.perfValue}>Rs. {st.lifetime.toLocaleString()}</span></div>
+                </div>
               ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+              {staffBlocks.length === 0 && <p style={{ color: '#94a3b8', fontSize: 13 }}>No staff accounts yet.</p>}
+            </div>
+          )}
+        </div>
+      )}
     </Layout>
   );
 }
