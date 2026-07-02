@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import Layout from '../components/Layout';
-import { withAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
+import Layout from '../../components/Layout';
+import { withAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
 
 function Users() {
   const [users, setUsers] = useState([]);
