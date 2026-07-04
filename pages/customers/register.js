@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '../../components/Layout';
 import BSDatePicker from '../../components/BSDatePicker';
+import BSMonthPicker from '../../components/BSMonthPicker';
 import { withAuth, useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { bsToAD, AREAS } from '../../lib/dateUtils';
@@ -10,53 +11,37 @@ function RegisterCustomer() {
   const { user } = useAuth();
   const router = useRouter();
   const [form, setForm] = useState({
-    name: '',
-    phone: '',
-    address: '',
-    area: 'ward-10',
-    house_number: '',
-    monthly_fee: '',
-    registration_date_bs: '',
-    payment_start_date_bs: '',
+    name: '', phone: '', address: '', area: 'ward-10',
+    house_number: '', monthly_fee: '',
+    registration_date_bs: '',   // YYYY/MM/DD
+    payment_start_ym: '',       // YYYY/MM
   });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  function update(field, value) {
-    setForm((f) => ({ ...f, [field]: value }));
-  }
+  function update(field, value) { setForm((f) => ({ ...f, [field]: value })); }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
-
-    if (!form.registration_date_bs || !form.payment_start_date_bs) {
-      setError('Please select both registration date and payment start date.');
-      return;
+    if (!form.registration_date_bs || !form.payment_start_ym) {
+      setError('Please select registration date and payment start month.'); return;
     }
-
     const regAD = bsToAD(form.registration_date_bs);
-    const startAD = bsToAD(form.payment_start_date_bs);
-
-    if (!regAD || !startAD) {
-      setError('Invalid date selected. Please choose year, month and day.');
-      return;
-    }
+    // Payment start: use 1st day of selected month
+    const payStartAD = bsToAD(`${form.payment_start_ym}/01`);
+    if (!regAD || !payStartAD) { setError('Invalid date selected.'); return; }
 
     setSubmitting(true);
     const { error: insertError } = await supabase.from('customers').insert({
-      name: form.name,
-      phone: form.phone,
-      address: form.address,
-      area: form.area,
+      name: form.name, phone: form.phone, address: form.address, area: form.area,
       house_number: form.house_number || null,
       monthly_fee: Number(form.monthly_fee),
       registration_date: regAD.toISOString().slice(0, 10),
-      payment_start_date: startAD.toISOString().slice(0, 10),
+      payment_start_date: payStartAD.toISOString().slice(0, 10),
       registered_by: user.id,
     });
     setSubmitting(false);
-
     if (insertError) setError(insertError.message);
     else router.push('/customers');
   }
@@ -78,7 +63,6 @@ function RegisterCustomer() {
           <label style={s.label}>Full Name *</label>
           <input style={s.input} value={form.name} onChange={(e) => update('name', e.target.value)} required />
         </div>
-
         <div style={s.row}>
           <div style={s.field}>
             <label style={s.label}>Phone Number *</label>
@@ -89,44 +73,31 @@ function RegisterCustomer() {
             <input style={s.input} value={form.house_number} onChange={(e) => update('house_number', e.target.value)} />
           </div>
         </div>
-
         <div style={s.field}>
           <label style={s.label}>Address *</label>
           <input style={s.input} value={form.address} onChange={(e) => update('address', e.target.value)} required />
         </div>
-
         <div style={s.row}>
           <div style={s.field}>
             <label style={s.label}>Area *</label>
             <select style={s.input} value={form.area} onChange={(e) => update('area', e.target.value)}>
-              {AREAS.map((a) => (
-                <option key={a.value} value={a.value}>{a.label}</option>
-              ))}
+              {AREAS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
             </select>
           </div>
           <div style={s.field}>
             <label style={s.label}>Monthly Fee (Rs.) *</label>
-            <input style={s.input} type="number" min="0" value={form.monthly_fee}
-              onChange={(e) => update('monthly_fee', e.target.value)} required />
+            <input style={s.input} type="number" min="0" value={form.monthly_fee} onChange={(e) => update('monthly_fee', e.target.value)} required />
           </div>
         </div>
 
+        {/* Registration date — keeps full YYYY/MM/DD */}
         <div style={s.field}>
-          <BSDatePicker
-            label="Registration Date (BS)"
-            required
-            value={form.registration_date_bs}
-            onChange={(val) => update('registration_date_bs', val)}
-          />
+          <BSDatePicker label="Registration Date (BS)" required value={form.registration_date_bs} onChange={(val) => update('registration_date_bs', val)} />
         </div>
 
+        {/* Payment start — year/month only */}
         <div style={s.field}>
-          <BSDatePicker
-            label="Payment Start Date (BS)"
-            required
-            value={form.payment_start_date_bs}
-            onChange={(val) => update('payment_start_date_bs', val)}
-          />
+          <BSMonthPicker label="Payment Start Month (BS)" required value={form.payment_start_ym} onChange={(val) => update('payment_start_ym', val)} />
         </div>
 
         {error && <p style={s.error}>{error}</p>}
