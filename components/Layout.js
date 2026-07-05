@@ -5,9 +5,11 @@ const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', icon: '◉' },
   { href: '/customers', label: 'Customers', icon: '◈' },
   { href: '/customers/register', label: 'Register Customer', icon: '＋' },
+  { href: '/businesses', label: 'Businesses', icon: '🏢' },
   { href: '/billing', label: 'Billing', icon: '▤' },
   { href: '/payments', label: 'Payments', icon: '◌' },
   { href: '/fee-requests', label: 'Fee Requests', icon: '↺' },
+  { href: '/reports', label: 'Reports', icon: '⬇' },
   { href: '/users', label: 'Users', icon: '◎', adminOnly: true },
   { href: '/settings', label: 'Settings', icon: '⚙', adminOnly: true },
 ];
