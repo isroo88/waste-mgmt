@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import Layout from '../components/Layout';
 import { withAuth, useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { toBS, monthsSince } from '../lib/dateUtils';
+import { toBS, monthsOverdueFromYM, monthsSince } from '../lib/dateUtils';
 
 const LineChart = dynamic(() => import('recharts').then((m) => m.LineChart), { ssr: false });
 const Line = dynamic(() => import('recharts').then((m) => m.Line), { ssr: false });
@@ -25,9 +25,7 @@ function Dashboard() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (user) loadDashboard();
-  }, [user]);
+  useEffect(() => { if (user) loadDashboard(); }, [user]);
 
   async function loadDashboard() {
     setLoading(true);
@@ -35,11 +33,23 @@ function Dashboard() {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
 
-    // --- Customer counts ---
+    // All customers
     const { data: allCustomers } = await supabase
       .from('customers')
-      .select('id, payment_start_date, status');
+      .select('id, payment_start_date, status, customer_type');
 
+    // Last paid_up_to per customer from bills — this is the correct overdue reference
+    const { data: allBills } = await supabase
+      .from('bills')
+      .select('customer_id, paid_up_to')
+      .order('created_at', { ascending: false });
+
+    const lastBillMap = {};
+    (allBills || []).forEach((b) => {
+      if (!lastBillMap[b.customer_id]) lastBillMap[b.customer_id] = b.paid_up_to;
+    });
+
+    // Last payment date per customer (fallback if no bills)
     const { data: lastPayments } = await supabase
       .from('payments')
       .select('customer_id, payment_date')
@@ -50,21 +60,33 @@ function Dashboard() {
       if (!lastPaymentMap[p.customer_id]) lastPaymentMap[p.customer_id] = p.payment_date;
     });
 
+    // Calculate status counts using paid_up_to (BS month) — same logic as customer profile
     let green = 0, yellow = 0, red = 0, active = 0;
     (allCustomers || []).forEach((c) => {
       if (c.status !== 'active') return;
       active++;
-      const ref = lastPaymentMap[c.id] || c.payment_start_date;
-      const months = monthsSince(ref);
-      if (months <= 3) green++;
-      else if (months <= 6) yellow++;
+
+      const paidUpToYM = lastBillMap[c.id];
+      let overdue;
+
+      if (paidUpToYM && /^\d{4}\/\d{2}$/.test(paidUpToYM)) {
+        // Use BS month-based overdue calculation — matches customer profile
+        overdue = monthsOverdueFromYM(paidUpToYM);
+      } else {
+        // Fallback: no bills yet — use months since payment_start_date
+        overdue = monthsSince(c.payment_start_date);
+      }
+
+      const ov = overdue ?? 0;
+      if (ov <= 3) green++;
+      else if (ov <= 6) yellow++;
       else red++;
     });
+
     setStats((s) => ({ ...s, total: allCustomers?.length || 0, active }));
     setStatusCounts({ green, yellow, red });
 
     if (isAdmin) {
-      // Admin daily/monthly totals
       const { data: dayP } = await supabase.from('payments').select('amount').gte('payment_date', today);
       const { data: monP } = await supabase.from('payments').select('amount').gte('payment_date', startOfMonth);
       const daily = (dayP || []).reduce((s, p) => s + Number(p.amount), 0);
@@ -81,11 +103,9 @@ function Dashboard() {
       });
       setGraphData(Object.keys(monthMap).sort().map((k) => ({ month: k, total: monthMap[k] })));
 
-      // Staff performance blocks
+      // Staff blocks
       const { data: staffList } = await supabase
-        .from('app_users')
-        .select('id, full_name, staff_code, status')
-        .eq('role', 'staff');
+        .from('app_users').select('id, full_name, staff_code, status').eq('role', 'staff');
 
       const blocks = await Promise.all((staffList || []).map(async (st) => {
         const { data: dayPay } = await supabase.from('payments').select('amount').eq('collected_by', st.id).gte('payment_date', today);
@@ -102,7 +122,6 @@ function Dashboard() {
       }));
       setStaffBlocks(blocks);
     } else {
-      // Staff sees own performance only
       const { data: dayPay } = await supabase.from('payments').select('amount').eq('collected_by', user.id).gte('payment_date', today);
       const { data: monPay } = await supabase.from('payments').select('amount').eq('collected_by', user.id).gte('payment_date', startOfMonth);
       const { data: lifePay } = await supabase.from('payments').select('amount').eq('collected_by', user.id);
@@ -124,7 +143,6 @@ function Dashboard() {
 
   const s = {
     grid4: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 },
-    grid3: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 },
     card: { background: '#fff', borderRadius: 12, padding: 20, border: '1px solid #e2e8f0' },
     cardLabel: { fontSize: 13, color: '#64748b', margin: 0 },
     cardValue: { fontSize: 26, fontWeight: 700, margin: '6px 0 0' },
@@ -137,10 +155,7 @@ function Dashboard() {
     section: { background: '#fff', borderRadius: 12, padding: 20, border: '1px solid #e2e8f0', marginBottom: 24 },
     sectionTitle: { fontSize: 15, fontWeight: 700, marginBottom: 16, marginTop: 0 },
     staffGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 },
-    staffCard: {
-      background: '#f8fafc', borderRadius: 10, padding: 16, border: '1px solid #e2e8f0',
-      cursor: 'pointer', transition: 'border-color 0.15s',
-    },
+    staffCard: { background: '#f8fafc', borderRadius: 10, padding: 16, border: '1px solid #e2e8f0', cursor: 'pointer' },
     staffName: { fontWeight: 700, fontSize: 15, margin: '0 0 2px' },
     staffCode: { fontSize: 12, color: '#94a3b8', margin: '0 0 12px' },
     perfRow: { display: 'flex', justifyContent: 'space-between', marginBottom: 6 },
@@ -151,13 +166,12 @@ function Dashboard() {
 
   return (
     <Layout title="Dashboard">
-      {/* Search */}
       <form style={s.searchForm} onSubmit={handleSearch}>
-        <input style={s.searchInput} placeholder="Search customers by name, phone, or address..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input style={s.searchInput} placeholder="Search customers..." value={search} onChange={(e) => setSearch(e.target.value)} />
         <button style={s.searchBtn} type="submit">Search</button>
       </form>
 
-      {/* Customer status counts — updated thresholds: green ≤3mo, yellow 3-6mo, red 6mo+ */}
+      {/* Status counts — based on paid_up_to BS month */}
       <div style={s.statusGrid}>
         <div style={s.statusCard('#dcfce7', '#bbf7d0')}>
           <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#15803d' }}><span style={s.dot('#22c55e')} />PAID UP TO DATE</p>
@@ -167,7 +181,7 @@ function Dashboard() {
         <div style={s.statusCard('#fef9c3', '#fde68a')}>
           <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#a16207' }}><span style={s.dot('#eab308')} />OVERDUE</p>
           <p style={s.statusNum('#a16207')}>{statusCounts.yellow}</p>
-          <p style={{ margin: 0, fontSize: 11, color: '#ca8a04' }}>3 – 6 months overdue</p>
+          <p style={{ margin: 0, fontSize: 11, color: '#ca8a04' }}>3–6 months overdue</p>
         </div>
         <div style={s.statusCard('#fee2e2', '#fecaca')}>
           <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#b91c1c' }}><span style={s.dot('#ef4444')} />CRITICAL</p>
@@ -193,7 +207,7 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Admin: collection graph */}
+      {/* Collection graph */}
       {isAdmin && graphData.length > 0 && (
         <div style={s.section}>
           <h3 style={s.sectionTitle}>Monthly Collection Trend</h3>
@@ -209,20 +223,17 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Admin: staff performance blocks */}
+      {/* Staff performance */}
       {isAdmin && (
         <div style={s.section}>
           <h3 style={s.sectionTitle}>Staff Performance</h3>
           {loading ? <p style={{ color: '#94a3b8' }}>Loading...</p> : (
             <div style={s.staffGrid}>
               {staffBlocks.map((st) => (
-                <div
-                  key={st.id}
-                  style={s.staffCard}
+                <div key={st.id} style={s.staffCard}
                   onClick={() => router.push(`/users/${st.id}`)}
                   onMouseEnter={(e) => e.currentTarget.style.borderColor = '#22c55e'}
-                  onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}
-                >
+                  onMouseLeave={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <p style={s.staffName}>{st.full_name}</p>
