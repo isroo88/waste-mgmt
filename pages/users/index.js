@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import Layout from '../../components/Layout';
 import { withAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
@@ -7,6 +8,7 @@ const SHOW_INITIAL = 5;
 const SHOW_STEP = 5;
 
 function Users() {
+  const router = useRouter();
   const [users, setUsers] = useState([]);
   const [form, setForm] = useState({ username: '', full_name: '', password: '', role: 'staff' });
   const [error, setError] = useState('');
@@ -118,7 +120,12 @@ function Users() {
             </thead>
             <tbody>
               {users.slice(0, visible).map((u) => (
-                <tr key={u.id}>
+                <tr key={u.id}
+                  style={{ cursor: u.role === 'staff' ? 'pointer' : 'default' }}
+                  onClick={() => u.role === 'staff' && router.push(`/users/${u.id}`)}
+                  onMouseEnter={(e) => { if (u.role === 'staff') e.currentTarget.style.background = '#f8fafc'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
+                >
                   <td style={s.td}>{u.username}</td>
                   <td style={s.td}>{u.full_name}</td>
                   <td style={s.td}>{u.staff_code || '—'}</td>

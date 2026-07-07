@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: '/payments', label: 'Payments', icon: '◌' },
   { href: '/fee-requests', label: 'Fee Requests', icon: '↺' },
   { href: '/reports', label: 'Reports', icon: '⬇' },
+  { href: '/staff', label: 'Staff', icon: '👥', adminOnly: true },
   { href: '/users', label: 'Users', icon: '◎', adminOnly: true },
   { href: '/settings', label: 'Settings', icon: '⚙', adminOnly: true },
 ];
